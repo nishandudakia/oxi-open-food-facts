@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
-import { Camera } from "expo-camera";
+import { View, Text, TouchableOpacity, StyleSheet, Image, Modal } from "react-native";
+import { Camera } from "expo-camera/legacy";
 
 const BarcodeScanner = () => {
   const [hasPermission, setHasPermission] = useState(null);
@@ -8,7 +8,10 @@ const BarcodeScanner = () => {
   const [barcode, setBarcode] = useState(null);
   const [productName, setProductName] = useState("Product name not available");
   const [ecoscore, setEcoscore] = useState("Not available");
-  const [manualBarcode, setManualBarcode] = useState("");
+  const [productImage, setProductImage] = useState(null); // New state for product image
+  const [modalVisible, setModalVisible] = useState(false);
+
+  console.log('ecoscore:' + ecoscore)
 
   useEffect(() => {
     const getCameraPermissions = async () => {
@@ -22,38 +25,49 @@ const BarcodeScanner = () => {
   const handleBarcodeScanned = async ({ data }) => {
     setScanned(true);
     setBarcode(data);
-
+    console.log(`Scanned Barcode Data: ${data}`);
+  
     try {
       const response = await fetch(
         `https://world.openfoodfacts.org/api/v2/product/${data}.json`
       );
       const result = await response.json();
-
+      console.log("API Response:", result);
+  
       if (result.status === 1) {
         const product = result.product;
-        let ecoScore = product.ecoscore_grade || "Not available";
-
-        if (ecoScore === "Not available") {
-          // If ecoscore is not available, search for a similar product
-          ecoScore = await getEcoscoreForSimilarProduct(product.product_name);
-        }
-
-        setEcoscore(ecoScore);
-
+  
+        // Log to see what's being returned by the API
+        console.log("Product Data:", product);
+  
+        const ecoScore = product.ecoscore_grade || null;
         const productName = product.product_name || "Product name not available";
+        const imageUrl = product.image_url || null;
+  
         setProductName(productName);
+        setProductImage(imageUrl);
+  
+        if (ecoScore) {
+          setEcoscore(ecoScore);
+        } else {
+          // Only search for similar products if the ecoscore is null or unavailable
+          const similarEcoScore = await getEcoscoreForSimilarProduct(productName);
+          setEcoscore(similarEcoScore);
+        }
       } else {
         console.error("Open Food Facts API error:", result.status_verbose);
         setEcoscore("Not available");
         setProductName("Product name not available");
+        setProductImage(null);
       }
     } catch (error) {
       console.error("Error fetching data from Open Food Facts API", error);
       setEcoscore("Not available");
       setProductName("Product name not available");
+      setProductImage(null);
     }
   };
-
+  
   const getEcoscoreForSimilarProduct = async (productName) => {
     try {
       const response = await fetch(
@@ -62,53 +76,14 @@ const BarcodeScanner = () => {
       const result = await response.json();
 
       if (result.status === 1 && result.products.length > 0) {
-        // Retrieve the ecoscore from the first result
         const similarProduct = result.products[1];
         return similarProduct.ecoscore_grade || "Not available";
       }
 
-      // If no similar product found, return "Not available"
       return "Not available";
     } catch (error) {
       console.error("Error fetching data for similar product", error);
       return "Not available";
-    }
-  };
-
-  const handleSubmitManualBarcode = async () => {
-    if (manualBarcode) {
-      setScanned(true);
-      setBarcode(manualBarcode);
-
-      try {
-        const response = await fetch(
-          `https://world.openfoodfacts.org/api/v2/product/${manualBarcode}.json`
-        );
-        const result = await response.json();
-
-        if (result.status === 1) {
-          const product = result.product;
-          let ecoScore = product.ecoscore_grade || "Not available";
-
-          if (ecoScore === "Not available") {
-            // If ecoscore is not available, search for a similar product
-            ecoScore = await getEcoscoreForSimilarProduct(product.product_name);
-          }
-
-          setEcoscore(ecoScore);
-
-          const productName = product.product_name || "Product name not available";
-          setProductName(productName);
-        } else {
-          console.error("Open Food Facts API error:", result.status_verbose);
-          setEcoscore("Not available");
-          setProductName("Product name not available");
-        }
-      } catch (error) {
-        console.error("Error fetching data from Open Food Facts API", error);
-        setEcoscore("Not available");
-        setProductName("Product name not available");
-      }
     }
   };
 
@@ -117,8 +92,13 @@ const BarcodeScanner = () => {
     setBarcode(null);
     setEcoscore("Not available");
     setProductName("Product name not available");
-    setManualBarcode("");
+    setProductImage(null); // Reset the product image
   };
+
+  const closeModal = () => {
+    setModalVisible(false); // Close the modal without resetting the scanned data
+  };
+  
 
   if (hasPermission === null) {
     return <Text>Requesting camera permission...</Text>;
@@ -130,13 +110,23 @@ const BarcodeScanner = () => {
 
   return (
     <View style={styles.container}>
-      <View style={styles.cameraContainer}>
-        <Camera
-          onBarCodeScanned={scanned ? undefined : handleBarcodeScanned}
-          style={styles.camera}
-        />
+      {/* Logo */}
+      <View style={styles.logoContainer}>
+        <Image source={require('./assets/logo.png')} style={styles.logo} />
       </View>
+
+      {/* Button to Open Camera Modal */}
+      <TouchableOpacity
+        style={[styles.button, styles.cameraButton]}
+        onPress={() => setModalVisible(true)}
+      >
+        <Text style={styles.buttonText}>Open Scanner</Text>
+      </TouchableOpacity>
+
       <View style={styles.barcodeContainer}>
+        {productImage && (
+          <Image source={{ uri: productImage }} style={styles.productImage} />
+        )}
         <Text style={styles.barcodeText}>{`Scanned Barcode: ${
           barcode || "None"
         }`}</Text>
@@ -147,30 +137,35 @@ const BarcodeScanner = () => {
           </>
         )}
       </View>
-      {scanned && (
-        <TouchableOpacity
-          style={styles.button}
-          onPress={resetScanner}
-        >
-          <Text>Tap to Scan Again</Text>
-        </TouchableOpacity>
-      )}
 
-      {/* Manual Barcode Input */}
-      <View style={styles.manualInputContainer}>
-        <TextInput
-          style={styles.manualInput}
-          placeholder="Enter Barcode"
-          value={manualBarcode}
-          onChangeText={(text) => setManualBarcode(text)}
-        />
-        <TouchableOpacity
-          style={styles.button}
-          onPress={handleSubmitManualBarcode}
-        >
-          <Text>Submit Barcode</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Camera Modal */}
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={modalVisible}
+        onRequestClose={closeModal}
+      >
+        <View style={styles.modalContainer}>
+          <Camera
+            onBarCodeScanned={scanned ? undefined : handleBarcodeScanned}
+            style={styles.camera}
+          />
+          {scanned && (
+            <TouchableOpacity
+              style={styles.button}
+              onPress={resetScanner}
+            >
+              <Text style={styles.buttonText}>Tap to Scan Again</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[styles.button, styles.closeButton]}
+            onPress={closeModal}
+          >
+            <Text style={styles.buttonText}>Close Scanner</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -179,20 +174,30 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     flexDirection: "column",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    paddingTop: 50,
+    paddingBottom: 50,
   },
-  cameraContainer: {
-    flex: 0.4,
-    justifyContent: "center",
+  logoContainer: {
     alignItems: "center",
   },
-  camera: {
-    height: "100%",
-    aspectRatio: 1,
+  logo: {
+    width: 100,
+    height: 100,
+    resizeMode: "contain",
+  },
+  cameraButton: {
+    backgroundColor: "#00C2FF",
+    marginHorizontal: 50,
+    marginBottom: 10,
+    borderRadius: 20,
+  },
+  buttonText: {
+    color: "white",
+    fontWeight: "bold",
   },
   barcodeContainer: {
     alignItems: "center",
-    marginVertical: 10,
   },
   barcodeText: {
     fontSize: 18,
@@ -202,21 +207,30 @@ const styles = StyleSheet.create({
     backgroundColor: "lightgray",
     padding: 15,
     alignItems: "center",
+    marginTop: 20,
+    borderRadius: 20
   },
-  manualInputContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginHorizontal: 20,
-    marginVertical: 10,
-  },
-  manualInput: {
+  modalContainer: {
     flex: 1,
-    height: 40,
-    borderColor: "gray",
-    borderWidth: 1,
-    marginRight: 10,
-    paddingHorizontal: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "white",
+  },
+  closeButton: {
+    backgroundColor: "#00C2FF",  // Changed color to #00C2FF
+    marginTop: 20,
+    paddingHorizontal: 20,
+    borderRadius: 20
+  },
+  camera: {
+    width: "100%",
+    height: "70%",
+  },
+  productImage: {
+    width: 200,
+    height: 200,
+    resizeMode: "contain",
+    marginBottom: 20, // Space between the image and barcode text
   },
 });
 
